@@ -4,16 +4,18 @@
         mixins:{
             componentUpdatable:'Rally.util.ComponentUpdatable'
         },
-        build:function (requestedQuery, chartTitle, buildFinishedCallback) {
+        build:function (requestedQuery, chartTitle, buildFinishedCallback, config) {
 
             this.chartTitle = chartTitle;
             this.buildFinishedCallback = buildFinishedCallback;
-            this.startTime = requestedQuery.find._ValidFrom.$gte; //TODO: better way to get/set this
+            this.startTime = config.startDate;
+            this.endTime = config.endDate;
+            this.rDates = config.releaseDates;
             this.query = {
                 find:Ext.encode(requestedQuery.find),
                 pagesize:10000
             };
-            this.requestedFields = Ext.Array.union(['_ValidFrom', '_ValidTo', 'ObjectID', 'ScheduleState'], requestedQuery.fields ? requestedQuery.fields : []);
+            this.requestedFields = Ext.Array.union(['_ValidFrom', '_ValidTo', 'ObjectID', 'ScheduleState', 'PlanEstimate'], requestedQuery.fields ? requestedQuery.fields : []);
 
             this.workspace = Rally.util.Ref.getOidFromRef(Rally.environment.getContext().context.scope.workspace._ref);
 
@@ -60,7 +62,7 @@
         _getScheduleStateOid:function (state, reqName) {
             var workspace = Rally.util.Ref.getOidFromRef(Rally.environment.getContext().context.scope.workspace._ref);
             var project = Rally.util.Ref.getOidFromRef(Rally.environment.getContext().context.scope.project._ref);
-            var analyticsScheduleStateQuery = "find={ScheduleState:'" + state + "',Project:" + project + "}&fields=['ScheduleState']&pagesize=1";
+            var analyticsScheduleStateQuery = "find={ScheduleState:'" + state + "'}&fields=['ScheduleState']&pagesize=1";
             Ext.Ajax.request({
                 url:"https://rally1.rallydev.com/analytics/1.27/" + workspace + "/artifact/snapshot/query.js?" + analyticsScheduleStateQuery,
                 method:"GET",
@@ -97,8 +99,8 @@
                     TaskUnitName:'Hours',
                     TimeTrackerEnabled:true,
                     TimeZone:'America/Denver',
-                    WorkDays:'Sunday,Monday,Tuesday,Wednesday,Thursday,Friday'
-                    // They work on Sundays
+                    WorkDays:'Monday,Tuesday,Wednesday,Thursday,Friday,Saturday'
+                    // They work on weekends
                 };
 
                 var acceptedStates = [];
@@ -110,16 +112,21 @@
                 }
 
                 var burnConfig = {
+                	today: queryResultsData.ETLDate,
                     workspaceConfiguration:workspaceConfiguration,
-                    upSeriesType:'Story Count',
+                    upSeriesType:'Points',
                     // 'Points' or 'Story Count'
                     series:[
                         'up',
-                        'scope'
+                        'scope',
+                        'projection',
+                        'rDates'
                     ],
 
                     acceptedStates:acceptedStates,
                     start:this.startTime,
+                    end:this.endTime,
+                    rDates:this.rDates,
                     // Calculated either by inspecting results or via configuration. pastEnd is automatically the last date in results
                     holidays:[
                         {
@@ -167,10 +174,9 @@
                             enabled:false
                         }
                     },
-                    yAxis:[
-                        {
+                    yAxis:{
                             title:{
-                                text:'Hours'
+                                text:'Points'
                             },
                             labels:{
                                 formatter:function () {
@@ -179,19 +185,19 @@
                             },
                             min:0
                         },
-                        {
-                            title:{
-                                text:burnConfig.upSeriesType
-                            },
-                            opposite:true,
-                            labels:{
-                                formatter:function () {
-                                    return this.value / 1;
-                                }
-                            },
-                            min:0
-                        }
-                    ],
+//                        {
+//                            title:{
+//                                text:burnConfig.upSeriesType
+//                            },
+//                            opposite:true,
+//                            labels:{
+//                                formatter:function () {
+//                                    return this.value / 1;
+//                                }
+//                            },
+//                            min:0
+//                        }
+//                    ],
                     tooltip:{
                         formatter:function () {
                             return '' + this.x + '<br />' + this.series.name + ': ' + this.y;

@@ -13,3 +13,21 @@
 .treeItem .pill {
     cursor: pointer;
 }
+
+.rui-triggerfield {
+	height: 20px !important;
+	width: 310px !important;
+	margin-left: 10px;
+}
+
+.x-form-item-label {
+	width: 145px !important;
+}
+
+.x-mask-msg {
+	top: 100px !important;
+}
+
+.x-css-shadow {
+	top: -1100px !important;
+}

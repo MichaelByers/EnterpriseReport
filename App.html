@@ -10,27 +10,290 @@
     <script type="text/javascript" src="https://raw.github.com/JoeKuan/Highcharts_ExtJs_4/master/Chart/ux/HighChart.js"></script>
     
     <script type="text/javascript" src="https://raw.github.com/RallyApps/rally_analytics/master/lib/lumenize/deploy/lumenize.js"></script>
-    <script type="text/javascript" src="https://raw.github.com/RallyApps/rally_analytics/master/lib/burncalculator.js"></script>
-    
+   
     
     <script type="text/javascript">
         Rally.onReady(function() {
+            (function() {
+              var ChartTime, burnCalculator, lumenize, root, timeSeriesCalculator, utils;
+              var __hasProp = Object.prototype.hasOwnProperty, __indexOf = Array.prototype.indexOf || function(item) { for (var i = 0, l = this.length; i < l; i++) { if (__hasProp.call(this, i) && this[i] === item) return i; } return -1; };
+            
+              root = this;
+            
+              if (typeof exports !== "undefined" && exports !== null) {
+                lumenize = require('../lib/lumenize');
+              } else {
+                lumenize = require('/lumenize');
+              }
+            
+              ChartTime = lumenize.ChartTime, timeSeriesCalculator = lumenize.timeSeriesCalculator;
+            
+              utils = lumenize.utils;
+            
+              burnCalculator = function(results, config) {
+            	//loop through and check for missing lookback data  
+            	for(var i = 0; i < results.length; i++){
+            		if(!results[i].hasOwnProperty('PlanEstimate')) {
+            		    results[i]['PlanEstimate'] = 0;
+            	    }
+            		if(!results[i].hasOwnProperty('ScheduleState')) {
+            		    results[i]['ScheduleState'] = 0;
+            	    }
+            	}
+            
+                /*
+                  Takes the "results" from a query to Rally's Analytics API (or similar MVCC-based implementation)
+                  and returns the series for burn charts.
+                */
+                var aggregationAtArray, aggregations, categories, ct, derivedFields, f, field, granularity, i, idealData, idealStep, listOfAtCTs, maxTaskEstimateTotal, name, originalPointCount, pastEnd, rangeSpec, s, series, seriesFound, seriesNames, start, end, timeSeriesCalculatorConfig, type, yAxis, _i, _len, _ref, _ref2, _ref3;
+                var todayIndex = -1;
+                rIndex = [];
+                if (config.granularity != null) {
+                  granularity = config.granularity;
+                } else {
+                  granularity = 'day';
+                }
+                var todayCT = new ChartTime(config.today, granularity, config.workspaceConfiguration.TimeZone);
+                var rDates = [];
+                for(var i = 0; i<config.rDates.length; i++){
+                	rDates[i] = new ChartTime(config.rDates[i], granularity, config.workspaceConfiguration.TimeZone);
+                }	
+                start = config.start;
+                start = new ChartTime(start, granularity, config.workspaceConfiguration.TimeZone);
+                end = config.end;
+                pastEnd = new ChartTime(end, granularity, config.workspaceConfiguration.TimeZone);
+                rangeSpec = {
+                  workDays: config.workspaceConfiguration.WorkDays,
+                  holidays: config.holidays,
+                  start: start,
+                  pastEnd: pastEnd
+                };
+                if (config.upSeriesType == null) config.upSeriesType = 'Sums';
+                derivedFields = [];
+                if (config.upSeriesType === 'Points') {
+                  derivedFields.push({
+                    name: 'Accepted',
+                    f: function(row) {
+                      var _ref;
+                      if (_ref = row.ScheduleState, __indexOf.call(config.acceptedStates, _ref) >= 0) {
+                        return row.PlanEstimate;
+                      } else {
+                        return 0;
+                      }
+                    }
+                  });
+                } else if (config.upSeriesType === 'Story Count') {
+                  derivedFields.push({
+                    name: 'Accepted',
+                    f: function(row) {
+                      var _ref;
+                      if (_ref = row.ScheduleState, __indexOf.call(config.acceptedStates, _ref) >= 0) {
+                        return 1;
+                      } else {
+                        return 0;
+                      }
+                    }
+                  });
+                } else {
+                  console.error("Unrecognized upSeriesType: " + config.upSeriesType);
+                }
+                seriesNames = [];
+                aggregations = [];
+                _ref = config.series;
+                for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+                  s = _ref[_i];
+                  seriesFound = true;
+                  switch (s) {
+                    case 'down':
+                      name = 'Task To Do (Hours)';
+                      f = '$sum';
+                      field = 'TaskRemainingTotal';
+                      yAxis = 0;
+                      type = 'column';
+                      break;
+                    case 'ideal':
+                      name = "Ideal (Hours)";
+                      f = '$sum';
+                      field = 'TaskEstimateTotal';
+                      yAxis = 0;
+                      type = 'line';
+                      break;
+                    case 'up':
+                      name = "Accepted (" + config.upSeriesType + ")";
+                      f = '$sum';
+                      field = 'Accepted';
+                      yAxis = 0;
+                      type = 'area';
+                      break;
+                    case 'scope':
+                      name = "Scope (" + config.upSeriesType + ")";
+                      if (config.upSeriesType === 'Story Count') {
+                        f = '$count';
+                      } else if (config.upSeriesType === 'Points') {
+                        f = '$sum';
+                      }
+                      field = 'PlanEstimate';
+                      yAxis = 0;
+                      type = 'line';
+                      break;
+                    case 'projection':
+                        name = "Ideal (Points)";
+                        f = '$sum';
+                        field = 'Ideal';
+                        yAxis = 0;
+                        type = 'line';
+                        break;
+                    case 'rDates':
+                        name = "Release";
+                        f = '$sum';
+                        field = 'Release';
+                        yAxis = 0;
+                        type = 'area';
+                        break;
+                    default:
+                      if ((s.name != null) && (s.f != null) && (s.field != null)) {
+                        name = s.name;
+                        f = s.f;
+                        field = s.field;
+                        type = 'column';
+                      } else {
+                        seriesFound = false;
+                        console.error("Unrecognizable series: " + s);
+                      }
+                  }
+                  if (seriesFound) {
+                    aggregations.push({
+                      name: name,
+                      as: name,
+                      f: f,
+                      field: field,
+                      yAxis: yAxis,
+                      type: type
+                    });
+                    seriesNames.push(name);
+                  }
+                }
+                timeSeriesCalculatorConfig = {
+                  rangeSpec: rangeSpec,
+                  derivedFields: derivedFields,
+                  aggregations: aggregations,
+                  timezone: config.workspaceConfiguration.TimeZone,
+                  snapshotValidFromField: '_ValidFrom',
+                  snapshotValidToField: '_ValidTo',
+                  snapshotUniqueID: 'ObjectID'
+                };
+                _ref2 = lumenize.timeSeriesCalculator(results, timeSeriesCalculatorConfig), listOfAtCTs = _ref2.listOfAtCTs, aggregationAtArray = _ref2.aggregationAtArray;
+                series = lumenize.aggregationAtArray_To_HighChartsSeries(aggregationAtArray, aggregations);
+                categories = (function() {
+                  var _j, _len2, _results;
+                  _results = [];
+                  for (_j = 0, _len2 = listOfAtCTs.length; _j < _len2; _j++) {
+                    ct = listOfAtCTs[_j];
+                    _results.push("" + (ct.toString()));
+                    if(ct.toString() === todayCT.toString()) {
+                    	todayIndex = _j;
+                    }
+                    for(var k = 0; k<rDates.length; k++){
+                    	if(ct.toString() === rDates[k].toString()){
+                    		rIndex.push(_j);
+                    	}
+                    }
+                  }
+                  return _results;
+                })();
+                originalPointCount = categories.length;
+                if (__indexOf.call(config.series, "Ideal") >= 0) {
+                  i = 0;
+                  while (series[i].name.indexOf("Ideal") < 0) {
+                    i++;
+                  }
+                  idealData = series[i].data;
+                  maxTaskEstimateTotal = lumenize.functions.$max(idealData);
+                  idealStep = maxTaskEstimateTotal / (originalPointCount - 1);
+                  for (i = 0, _ref3 = originalPointCount - 2; 0 <= _ref3 ? i <= _ref3 : i >= _ref3; 0 <= _ref3 ? i++ : i--) {
+                    idealData[i] = (originalPointCount - 1 - i) * idealStep;
+                  }
+                  idealData[originalPointCount - 1] = 0;
+                }
+                if ((__indexOf.call(config.series, "projection") >= 0) && (todayIndex >= 0)) {
+                    i = 0;
+                    while (series[i].name.indexOf("Ideal (Points)") < 0) {
+                      i++;
+                    }
+                    var j = 0;
+                    while (series[j].name.indexOf("Accepted") < 0) {
+                        j++;
+                    }
+                    var upData = series[j].data;
+                    idealData = series[i].data;
+                    
+                    //calculate ideal burn up line based on previous X number of days
+                    var delta = (upData[todayIndex] - upData[todayIndex-21])/21;
+                    idealData[todayIndex-21] = upData[todayIndex-21];
+                    for (i = 0; i<idealData.length; i++) {
+                    	if(i < todayIndex - 21) {
+                    		idealData[i] = null;
+                    	} else if (i > todayIndex - 21){
+                            idealData[i] = idealData[i-1] + delta;
+                    	}
+                    }
+                    for (i = todayIndex+1; i<upData.length; i++) {
+                        upData[i] = null;
+                    }
+                  }
+                if ((__indexOf.call(config.series, "rDates") >= 0) && (todayIndex >= 0)) {
+                    i = 0;
+                    while (series[i].name.indexOf("Release") < 0) {
+                      i++;
+                    }
+                    var j = 0;
+                    while (series[j].name.indexOf("Scope") < 0) {
+                        j++;
+                    }
+                    var sData = series[j].data;
+                    var rData = series[i].data;
+                    
+                    var sMax = lumenize.functions.$max(sData);
+                    sMax = sMax + 450;
+            
+                    for(i=0; i<rData.length; i++){
+                    	for(j=0; j<rIndex.length; j++){
+                    		if((i === (rIndex[j]-1))||(i === rIndex[j])){
+                    			rData[i] = sMax;
+                    			break;
+                    		} else {
+                    			rData[i] = null;
+                    		}
+                    	}
+                    }
+                  }
+                return {
+                  categories: categories,
+                  series: series
+                };
+              };
+            
+              root.burnCalculator = burnCalculator;
+            
+            }).call(this);
             (function () {
             
                 Ext.define('Rally.app.analytics.BurnChartBuilder', {
                     mixins:{
                         componentUpdatable:'Rally.util.ComponentUpdatable'
                     },
-                    build:function (requestedQuery, chartTitle, buildFinishedCallback) {
+                    build:function (requestedQuery, chartTitle, buildFinishedCallback, config) {
             
                         this.chartTitle = chartTitle;
                         this.buildFinishedCallback = buildFinishedCallback;
-                        this.startTime = requestedQuery.find._ValidFrom.$gte; //TODO: better way to get/set this
+                        this.startTime = config.startDate;
+                        this.endTime = config.endDate;
+                        this.rDates = config.releaseDates;
                         this.query = {
                             find:Ext.encode(requestedQuery.find),
                             pagesize:10000
                         };
-                        this.requestedFields = Ext.Array.union(['_ValidFrom', '_ValidTo', 'ObjectID', 'ScheduleState'], requestedQuery.fields ? requestedQuery.fields : []);
+                        this.requestedFields = Ext.Array.union(['_ValidFrom', '_ValidTo', 'ObjectID', 'ScheduleState', 'PlanEstimate'], requestedQuery.fields ? requestedQuery.fields : []);
             
                         this.workspace = Rally.util.Ref.getOidFromRef(Rally.environment.getContext().context.scope.workspace._ref);
             
@@ -77,7 +340,7 @@
                     _getScheduleStateOid:function (state, reqName) {
                         var workspace = Rally.util.Ref.getOidFromRef(Rally.environment.getContext().context.scope.workspace._ref);
                         var project = Rally.util.Ref.getOidFromRef(Rally.environment.getContext().context.scope.project._ref);
-                        var analyticsScheduleStateQuery = "find={ScheduleState:'" + state + "',Project:" + project + "}&fields=['ScheduleState']&pagesize=1";
+                        var analyticsScheduleStateQuery = "find={ScheduleState:'" + state + "'}&fields=['ScheduleState']&pagesize=1";
                         Ext.Ajax.request({
                             url:"https://rally1.rallydev.com/analytics/1.27/" + workspace + "/artifact/snapshot/query.js?" + analyticsScheduleStateQuery,
                             method:"GET",
@@ -114,8 +377,8 @@
                                 TaskUnitName:'Hours',
                                 TimeTrackerEnabled:true,
                                 TimeZone:'America/Denver',
-                                WorkDays:'Sunday,Monday,Tuesday,Wednesday,Thursday,Friday'
-                                // They work on Sundays
+                                WorkDays:'Monday,Tuesday,Wednesday,Thursday,Friday,Saturday'
+                                // They work on weekends
                             };
             
                             var acceptedStates = [];
@@ -127,16 +390,21 @@
                             }
             
                             var burnConfig = {
+                            	today: queryResultsData.ETLDate,
                                 workspaceConfiguration:workspaceConfiguration,
-                                upSeriesType:'Story Count',
+                                upSeriesType:'Points',
                                 // 'Points' or 'Story Count'
                                 series:[
                                     'up',
-                                    'scope'
+                                    'scope',
+                                    'projection',
+                                    'rDates'
                                 ],
             
                                 acceptedStates:acceptedStates,
                                 start:this.startTime,
+                                end:this.endTime,
+                                rDates:this.rDates,
                                 // Calculated either by inspecting results or via configuration. pastEnd is automatically the last date in results
                                 holidays:[
                                     {
@@ -184,10 +452,9 @@
                                         enabled:false
                                     }
                                 },
-                                yAxis:[
-                                    {
+                                yAxis:{
                                         title:{
-                                            text:'Hours'
+                                            text:'Points'
                                         },
                                         labels:{
                                             formatter:function () {
@@ -196,19 +463,19 @@
                                         },
                                         min:0
                                     },
-                                    {
-                                        title:{
-                                            text:burnConfig.upSeriesType
-                                        },
-                                        opposite:true,
-                                        labels:{
-                                            formatter:function () {
-                                                return this.value / 1;
-                                            }
-                                        },
-                                        min:0
-                                    }
-                                ],
+            //                        {
+            //                            title:{
+            //                                text:burnConfig.upSeriesType
+            //                            },
+            //                            opposite:true,
+            //                            labels:{
+            //                                formatter:function () {
+            //                                    return this.value / 1;
+            //                                }
+            //                            },
+            //                            min:0
+            //                        }
+            //                    ],
                                 tooltip:{
                                     formatter:function () {
                                         return '' + this.x + '<br />' + this.series.name + ': ' + this.y;
@@ -236,84 +503,111 @@
                 mixins: {
                     messageable: 'Rally.Messageable'
                 },
-                layout: {
-                    type: 'hbox',
-                    align: 'stretch'
-                },
                 appName:'Burn Chart',
                 cls:'burnchart',
-            
-                initComponent: function() {
-                    this.callParent(arguments);
-                    var piTree = Ext.widget('rallytree', {
-                        id: 'rallytree1',
-                        width: 400,
-                        height: '100%',
-                        topLevelModel: 'PortfolioItem',
-                        childModelTypeForRecordFn: function(record){
-                            if(record.get('Children') && record.get('Children').length > 0){
-                                return 'Portfolio Item';
-                            }
-                        },
-                        parentAttributeForChildRecordFn: function(record){
-                            if(record.get('Children') && record.get('Children').length > 0){
-                                return 'Parent';
-                            }
-                        },
-                        listeners: {
-                            add: this._onTreeRowAdd,
-                            scope: this
-                        },
-                        topLevelStoreConfig: {
-                            listeners: {
-                                beforeload: function(store) {
-                                    this.getEl().mask('Loading...');
-                                },
-                                load: function(store, records) {
-                                    if (records.length > 0) {
-                                        this.add({
-                                            id: 'chartCmp',
-                                            xtype: 'component',
-                                            flex: 1,
-                                            html: '<div>Choose a Portfolio Item from the list to see its burn chart.</div>'
-                                        })
-                                    }
-                                    this.getEl().unmask();
-                                },
-                                scope: this
-                            }
-                        },
-                        //override
-                        drawEmptyMsg: function(){
-                            if (Ext.getCmp('chartCmp')) {
-                                Ext.getCmp('chartCmp').destroy();
-                            }
-                            this.add({
-                                xtype: 'component',
-                                html: '<p> No Portfolio Items within the currently scoped project(s).</p>'
-                            });
-                        }
-                    });
-                    this.add(piTree);
-            
-                    //add the click handler to tree rows when they are added to the tree
-                    //this.down('#rallytree1').on('add', this._onTreeRowAdd, this);
-                },
-            
+                
                 launch: function () {
-                    this.startTime = '2012-03-01T00:00:00Z';
+            
+                	this.sDate = new Date();
+            		this.sDate.setYear(2100);
+            		this.eDate = new Date(0);
+            		this.rDates = [];
+            		
+                	this.add({
+                		xtype: 'rallycombobox',
+                		fieldLabel: 'Select an Enterprise Release',
+                		width: '400px',
+            	        storeConfig: {
+            	            autoLoad: true,
+            	            model: 'Program',
+            	            fetch: 'Releases,ReleaseStartDate,ReleaseDate'
+            	        },
+            	        listeners: {
+            	            select: this._onSelect,
+            	            scope: this
+            	        }
+                	});
+                },
+                
+                _onSelect: function(comboBox, records) {
+                	
+                	 var cmp = this.add({
+                         id: 'loadCmp',
+                         xtype: 'component',
+                         flex: 1
+                     });
+                	 cmp.setLoading('Building your chart...');
+                	 
+            		var oidReleaseArray = new Array();
+            		
+                	//loop through records, get min start date and max end date
+            		var releases = records[0].get('Releases');
+                	for(var i=0; i < releases.length; i++){
+                		var myRelease = releases[i];
+                		this.rDates.push(new Date(Date.parse(myRelease.ReleaseDate)));
+                		if(Date.parse(myRelease.ReleaseStartDate) < this.sDate)
+                			this.sDate = new Date(Date.parse(myRelease.ReleaseStartDate));
+                		if(Date.parse(myRelease.ReleaseDate) > this.eDate)
+                			this.eDate = new Date(Date.parse(myRelease.ReleaseDate));
+                	}
+                	//temp work around for missing data
+                	//this.sDate.setFullYear(2012, 02, 01);
+                	filter = [];
+                	for(var i = 0; i < releases.length; i++) {
+                		var newFilter = new Rally.data.QueryFilter({
+            				property: 'Name',
+            				operator: '=',
+            				value: releases[i]._refObjectName
+            			});
+                		
+                		if(i == 0) {
+                			filter = newFilter;
+                		}
+                		else {
+                			filter = filter.or(newFilter);
+                		}
+                	}
+                	var context = this.context.getDataContext();
+                	context.projectScopeDown = true;
+                	var releaseStore = Ext.create('Rally.data.WsapiDataStore', {
+                		autoLoad: true,
+                	    model: 'Release',
+                	    filters: filter,
+                	    fetch: 'ObjectID,Project',
+                	    context: context,
+                	    listeners: {
+                	    	load: {
+                	    		fn: this._onReleasesLoad,
+                	    		scope: this
+                	    	}
+                	    }
+                	});
+                },
+                
+                _onReleasesLoad: function(store, data) {
+                	var releases = [];
+                	for(var i = 0; i < data.length; i++) {
+                		releases.push(data[i].get('ObjectID')); 
+                	}
+                	
+                	//this.startTime = '2012-01-01T00:00:00Z';
                     this.chartQuery = {
                         find:{
-                            _Type:'HierarchicalRequirement',
+                        	_Type: {'$in': ['HierarchicalRequirement','Defect']},
                             Children:null,
+                            Release: {'$in': releases},
                             _ValidFrom: {
-                                $gte: this.startTime
+                                $gte: this.sDate //this.startTime
                             }
                         }
                     };
             
                     this.chartConfigBuilder = Ext.create('Rally.app.analytics.BurnChartBuilder');
-            
+                    this.chartConfigBuilder.build(this.chartQuery, 'Where\'s my Hasenpfeffer', Ext.bind(this._afterChartConfigBuilt, this), {
+                    	startDate: this.sDate,
+                    	endDate: this.eDate,
+                    	releaseDates: this.rDates
+                    });
                 },
             
                 _afterChartConfigBuilt: function (success, chartConfig) {
@@ -330,7 +624,7 @@
                         this.add({
                             id: 'chartCmp',
                             xtype: 'component',
-                            html: '<div>No user story data found for ' + formattedId + ' starting from: ' + this.startTime + '</div>'
+                            html: '<div>No data found starting from: ' + this.sDate + '</div>'
                         });
                     }
                 },
@@ -339,6 +633,11 @@
                     var chartCmp = this.down('#chartCmp');
                     if (chartCmp) {
                         this.remove(chartCmp);
+                    }
+                    
+                    var loadCmp = this.down('#loadCmp');
+                    if (loadCmp) {
+                    	this.remove(loadCmp);
                     }
                 },
             
@@ -388,7 +687,24 @@
         .treeItem .pill {
             cursor: pointer;
         }
-    </style>
+        
+        .rui-triggerfield {
+        	height: 20px !important;
+        	width: 310px !important;
+        	margin-left: 10px;
+        }
+        
+        .x-form-item-label {
+        	width: 145px !important;
+        }
+        
+        .x-mask-msg {
+        	top: 100px !important;
+        }
+        
+        .x-css-shadow {
+        	top: -1100px !important;
+        }    </style>
 </head>
 <body></body>
 </html>

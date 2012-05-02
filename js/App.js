@@ -3,84 +3,111 @@ Ext.define('BurnChartApp', {
     mixins: {
         messageable: 'Rally.Messageable'
     },
-    layout: {
-        type: 'hbox',
-        align: 'stretch'
-    },
     appName:'Burn Chart',
     cls:'burnchart',
-
-    initComponent: function() {
-        this.callParent(arguments);
-        var piTree = Ext.widget('rallytree', {
-            id: 'rallytree1',
-            width: 400,
-            height: '100%',
-            topLevelModel: 'PortfolioItem',
-            childModelTypeForRecordFn: function(record){
-                if(record.get('Children') && record.get('Children').length > 0){
-                    return 'Portfolio Item';
-                }
-            },
-            parentAttributeForChildRecordFn: function(record){
-                if(record.get('Children') && record.get('Children').length > 0){
-                    return 'Parent';
-                }
-            },
-            listeners: {
-                add: this._onTreeRowAdd,
-                scope: this
-            },
-            topLevelStoreConfig: {
-                listeners: {
-                    beforeload: function(store) {
-                        this.getEl().mask('Loading...');
-                    },
-                    load: function(store, records) {
-                        if (records.length > 0) {
-                            this.add({
-                                id: 'chartCmp',
-                                xtype: 'component',
-                                flex: 1,
-                                html: '<div>Choose a Portfolio Item from the list to see its burn chart.</div>'
-                            })
-                        }
-                        this.getEl().unmask();
-                    },
-                    scope: this
-                }
-            },
-            //override
-            drawEmptyMsg: function(){
-                if (Ext.getCmp('chartCmp')) {
-                    Ext.getCmp('chartCmp').destroy();
-                }
-                this.add({
-                    xtype: 'component',
-                    html: '<p> No Portfolio Items within the currently scoped project(s).</p>'
-                });
-            }
-        });
-        this.add(piTree);
-
-        //add the click handler to tree rows when they are added to the tree
-        //this.down('#rallytree1').on('add', this._onTreeRowAdd, this);
-    },
-
+    
     launch: function () {
-        this.startTime = '2012-03-01T00:00:00Z';
+
+    	this.sDate = new Date();
+		this.sDate.setYear(2100);
+		this.eDate = new Date(0);
+		this.rDates = [];
+		
+    	this.add({
+    		xtype: 'rallycombobox',
+    		fieldLabel: 'Select an Enterprise Release',
+    		width: '400px',
+	        storeConfig: {
+	            autoLoad: true,
+	            model: 'Program',
+	            fetch: 'Releases,ReleaseStartDate,ReleaseDate'
+	        },
+	        listeners: {
+	            select: this._onSelect,
+	            scope: this
+	        }
+    	});
+    },
+    
+    _onSelect: function(comboBox, records) {
+    	
+    	 var cmp = this.add({
+             id: 'loadCmp',
+             xtype: 'component',
+             flex: 1
+         });
+    	 cmp.setLoading('Building your chart...');
+    	 
+		var oidReleaseArray = new Array();
+		
+    	//loop through records, get min start date and max end date
+		var releases = records[0].get('Releases');
+    	for(var i=0; i < releases.length; i++){
+    		var myRelease = releases[i];
+    		this.rDates.push(new Date(Date.parse(myRelease.ReleaseDate)));
+    		if(Date.parse(myRelease.ReleaseStartDate) < this.sDate)
+    			this.sDate = new Date(Date.parse(myRelease.ReleaseStartDate));
+    		if(Date.parse(myRelease.ReleaseDate) > this.eDate)
+    			this.eDate = new Date(Date.parse(myRelease.ReleaseDate));
+    	}
+    	//temp work around for missing data
+    	//this.sDate.setFullYear(2012, 02, 01);
+    	filter = [];
+    	for(var i = 0; i < releases.length; i++) {
+    		var newFilter = new Rally.data.QueryFilter({
+				property: 'Name',
+				operator: '=',
+				value: releases[i]._refObjectName
+			});
+    		
+    		if(i == 0) {
+    			filter = newFilter;
+    		}
+    		else {
+    			filter = filter.or(newFilter);
+    		}
+    	}
+    	var context = this.context.getDataContext();
+    	context.projectScopeDown = true;
+    	var releaseStore = Ext.create('Rally.data.WsapiDataStore', {
+    		autoLoad: true,
+    	    model: 'Release',
+    	    filters: filter,
+    	    fetch: 'ObjectID,Project',
+    	    context: context,
+    	    listeners: {
+    	    	load: {
+    	    		fn: this._onReleasesLoad,
+    	    		scope: this
+    	    	}
+    	    }
+    	});
+    },
+    
+    _onReleasesLoad: function(store, data) {
+    	var releases = [];
+    	for(var i = 0; i < data.length; i++) {
+    		releases.push(data[i].get('ObjectID')); 
+    	}
+    	
+    	//this.startTime = '2012-01-01T00:00:00Z';
         this.chartQuery = {
             find:{
-                _Type:'HierarchicalRequirement',
+            	_Type: {'$in': ['HierarchicalRequirement','Defect']},
                 Children:null,
+                Release: {'$in': releases},
                 _ValidFrom: {
-                    $gte: this.startTime
+                    $gte: this.sDate //this.startTime
                 }
             }
         };
 
         this.chartConfigBuilder = Ext.create('Rally.app.analytics.BurnChartBuilder');
-
+        this.chartConfigBuilder.build(this.chartQuery, 'Where\'s my Hasenpfeffer', Ext.bind(this._afterChartConfigBuilt, this), {
+        	startDate: this.sDate,
+        	endDate: this.eDate,
+        	releaseDates: this.rDates
+        });
     },
 
     _afterChartConfigBuilt: function (success, chartConfig) {
@@ -97,7 +124,7 @@ Ext.define('BurnChartApp', {
             this.add({
                 id: 'chartCmp',
                 xtype: 'component',
-                html: '<div>No user story data found for ' + formattedId + ' starting from: ' + this.startTime + '</div>'
+                html: '<div>No data found starting from: ' + this.sDate + '</div>'
             });
         }
     },
@@ -106,6 +133,11 @@ Ext.define('BurnChartApp', {
         var chartCmp = this.down('#chartCmp');
         if (chartCmp) {
             this.remove(chartCmp);
+        }
+        
+        var loadCmp = this.down('#loadCmp');
+        if (loadCmp) {
+        	this.remove(loadCmp);
         }
     },
 
